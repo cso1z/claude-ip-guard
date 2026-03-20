@@ -222,3 +222,12 @@ Members can override locally via `.claude/settings.local.json` (not committed).
 ## License
 
 MIT
+
+<!-- keywords
+Claude account ban Claude Code plugin Claude IP restriction Claude geolocation block
+Claude access control Claude Code hooks Anthropic export control OFAC compliance
+Claude banned Claude suspended IP-based blocking developer security tool
+Claude 封号 Claude Code 封号 Claude 账号安全 Claude 账号被封 Claude 访问受限
+Claude Code 插件 Claude 中国大陆 Claude 国内使用 Claude 无法使用
+IP 地理位置检测 IP 访问控制 防封号 账号保护 城市切换 IP 异常
+-->
