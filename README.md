@@ -13,7 +13,7 @@ A Claude Code hook plugin that blocks access based on IP geolocation. Intercepts
 - **Fail-safe** — API failures always allow access (no false blocking due to network issues)
 - **Dual API** — `ipinfo.io` (HTTPS, primary), `ip-api.com` (HTTP, fallback)
 - **Shared library** — Core logic in `ip-guard-lib.sh`, sourced by both hook scripts
-- **Global or project install** — One command installs to a single project or all projects on the machine
+- **Global or per-project install** — One command installs to a single project or all projects on the machine
 
 ## Blocked Countries
 
