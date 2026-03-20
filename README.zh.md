@@ -173,6 +173,39 @@ claude-ip-guard/
 └── ip-guard-YYYY-MM-DD.log          # 按天分割的运行日志
 ```
 
+## 验证是否生效
+
+按以下步骤确认 hook 已正常工作。
+
+**第一步 — 查询当前网络的国家代码**
+
+访问 [https://ipinfo.io/json](https://ipinfo.io/json)，找到 `country` 字段，例如 `"country": "SG"`。
+
+**第二步 — 临时将其加入禁止名单**
+
+打开 `.claude/scripts/ip-guard-lib.sh`（全局安装则是 `~/.claude/scripts/ip-guard-lib.sh`），追加你的国家代码：
+
+```bash
+BLOCKED_COUNTRIES=(
+    "CN"
+    "RU"
+    # ... 已有条目 ...
+    "SG"  # ← 此处填入你的国家代码，仅用于测试
+)
+```
+
+**第三步 — 重启 Claude Code，随意发送一条消息**
+
+提交 prompt 时应看到如下拦截提示：
+
+![拦截效果截图](./doc/screenshots/blocked.png)
+
+**第四步 — 删除测试条目**
+
+删除第二步添加的那行代码并保存文件，下次 prompt 立即恢复正常。
+
+---
+
 ## 团队共享
 
 将 `.claude/settings.json` 和 `.claude/scripts/` 提交到仓库，团队成员拉取后自动生效。

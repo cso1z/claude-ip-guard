@@ -172,6 +172,39 @@ claude-ip-guard/
 └── ip-guard-YYYY-MM-DD.log         # Daily log files
 ```
 
+## Verify Installation
+
+Follow these steps to confirm the hooks are working correctly.
+
+**Step 1 — Find your current country code**
+
+Check your current IP's country code at [https://ipinfo.io/json](https://ipinfo.io/json). Look for the `country` field, e.g. `"country": "SG"`.
+
+**Step 2 — Temporarily add it to the block list**
+
+Open `.claude/scripts/ip-guard-lib.sh` (or `~/.claude/scripts/ip-guard-lib.sh` for global install) and add your country code:
+
+```bash
+BLOCKED_COUNTRIES=(
+    "CN"
+    "RU"
+    # ... existing entries ...
+    "SG"  # ← add your country code here for testing
+)
+```
+
+**Step 3 — Restart Claude Code and send any message**
+
+You should see the following block message when submitting a prompt:
+
+![Block message screenshot](./doc/screenshots/blocked.png)
+
+**Step 4 — Remove the test entry**
+
+Delete the line you added in Step 2, save the file. The block is lifted immediately on the next prompt.
+
+---
+
 ## Team Sharing
 
 Commit `.claude/settings.json` and `.claude/scripts/` to your repository. All team members who pull the repo will have the hooks automatically applied.
