@@ -4,6 +4,8 @@ English | [中文](./README.zh.md)
 
 A Claude Code hook plugin that blocks access based on IP geolocation. Intercepts user prompts when the current IP is located in a restricted country or region, and warns users when frequent city switching is detected.
 
+> Prevent Claude account bans caused by IP geolocation issues · 防止因 IP 地理位置异常导致的 Claude 封号、账号被封问题
+
 ## Features
 
 - **Country blocking** — Blocks access for IPs in restricted countries (exit 2, user-visible message)
