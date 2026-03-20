@@ -91,13 +91,50 @@ Each alert includes a formatted table of the last 30 days of IP history.
 
 - `bash`
 - `curl`
-- `python3`
+- `python3` or `python`
 
-Supported platforms: macOS, Linux, WSL. Native Windows (CMD/PowerShell) is not supported.
+Supported platforms: macOS, Linux, WSL, **Windows (Git Bash)**. Native Windows CMD/PowerShell is not supported.
+
+### Windows — Git Bash setup
+
+The scripts require a bash environment. On Windows, [Git for Windows](https://git-scm.com/download/win) provides Git Bash, which includes `bash`, `curl`, and `grep` — no WSL needed.
+
+**Step 1 — Install Git for Windows**
+
+Download and run the installer. On the "Adjusting your PATH environment" screen, select **"Git from the command line and also from 3rd-party software"** to add `bash` to PATH.
+
+**Step 2 — Install Python**
+
+Download Python from [python.org](https://www.python.org/downloads/windows/) and run the installer. Check **"Add Python to PATH"** before clicking Install.
+
+> The scripts auto-detect whether to use `python3` or `python`, so both naming conventions work.
+
+**Step 3 — Open Git Bash and run the installer**
+
+Right-click any folder in Explorer and select **"Git Bash Here"**, then run:
+
+```bash
+git clone https://github.com/your-username/claude-ip-guard.git
+bash claude-ip-guard/install.sh --global
+```
+
+**Step 4 — Verify**
+
+```bash
+bash ~/.claude/scripts/check-ip-on-prompt.sh
+# Expected: exits cleanly (code 0)
+
+cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
+# Expected: a "放行" (allowed) log line with your IP and country
+```
+
+> All subsequent `bash` and `git clone` commands in this README should be run inside Git Bash, not CMD or PowerShell.
 
 ## Installation
 
 ### Global install (applies to all projects on this machine)
+
+> **Windows users**: Run the commands below in **Git Bash**, not CMD or PowerShell. Right-click any folder and select "Git Bash Here" to open it.
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git

@@ -89,13 +89,50 @@ UserPromptSubmit（每次用户发送消息前）
 
 - `bash`
 - `curl`
-- `python3`
+- `python3` 或 `python`
 
-支持平台：macOS、Linux、WSL。不支持纯 Windows（CMD/PowerShell）。
+支持平台：macOS、Linux、WSL、**Windows（Git Bash）**。不支持纯 Windows CMD/PowerShell。
+
+### Windows — 使用 Git Bash 运行
+
+脚本需要 bash 环境。在 Windows 上，[Git for Windows](https://git-scm.com/download/win) 自带 Git Bash，内置 `bash`、`curl`、`grep`，无需安装 WSL。
+
+**第一步 — 安装 Git for Windows**
+
+下载并运行安装程序。在 "Adjusting your PATH environment" 步骤中，选择 **"Git from the command line and also from 3rd-party software"**，使 `bash` 加入系统 PATH。
+
+**第二步 — 安装 Python**
+
+从 [python.org](https://www.python.org/downloads/windows/) 下载 Python 安装包，安装时勾选 **"Add Python to PATH"**。
+
+> 脚本会自动检测使用 `python3` 还是 `python`，两种命名均可正常工作。
+
+**第三步 — 打开 Git Bash 执行安装**
+
+在任意文件夹右键，选择 **"Git Bash Here"** 打开 Git Bash，然后运行：
+
+```bash
+git clone https://github.com/your-username/claude-ip-guard.git
+bash claude-ip-guard/install.sh --global
+```
+
+**第四步 — 验证是否正常运行**
+
+```bash
+bash ~/.claude/scripts/check-ip-on-prompt.sh
+# 预期：脚本正常退出（exit code 0）
+
+cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
+# 预期：看到包含 IP 和国家代码的"放行"日志
+```
+
+> 本文档中所有 `bash` 和 `git clone` 命令均需在 Git Bash 中执行，不要在 CMD 或 PowerShell 中运行。
 
 ## 安装方式
 
 ### 全局安装（对本机所有项目生效）
+
+> **Windows 用户**：以下命令需在 **Git Bash** 中执行，不能使用 CMD 或 PowerShell。右键任意文件夹选择 "Git Bash Here" 即可打开。
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git

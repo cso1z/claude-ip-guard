@@ -9,6 +9,23 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── 探测 Python 解释器（兼容 Windows Git Bash / macOS / Linux）───────────────
+# Windows Git Bash 中 python3 指向 Windows Store 别名，实际不可用
+_detect_python() {
+    if command -v python3 &>/dev/null && python3 -c "import sys; sys.exit(0)" 2>/dev/null; then
+        echo "python3"
+    elif command -v python &>/dev/null && python -c "import sys; sys.exit(0)" 2>/dev/null; then
+        echo "python"
+    else
+        echo ""
+    fi
+}
+PYTHON=$(_detect_python)
+if [ -z "$PYTHON" ]; then
+    echo "错误：未找到可用的 Python 解释器（需要 Python 3）" >&2
+    exit 1
+fi
+
 # ── 解析参数 ──────────────────────────────────────────────────────────────────
 GLOBAL=false
 TARGET_DIR=""
@@ -88,8 +105,8 @@ if [ ! -f "$TARGET_SETTINGS" ]; then
     echo "$HOOK_CONFIG" > "$TARGET_SETTINGS"
     echo ">> settings.json 已创建：$TARGET_SETTINGS"
 else
-    # 用 python3 将 ip-guard hooks 合并进已有 settings.json，保留其他配置不变
-    python3 - "$TARGET_SETTINGS" "$START_CMD" "$PROMPT_CMD" <<'PYEOF'
+    # 用 python 将 ip-guard hooks 合并进已有 settings.json，保留其他配置不变
+    $PYTHON - "$TARGET_SETTINGS" "$START_CMD" "$PROMPT_CMD" <<'PYEOF'
 import sys, json, os
 
 settings_path = sys.argv[1]

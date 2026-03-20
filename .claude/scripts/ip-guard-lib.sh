@@ -33,6 +33,26 @@ CURL_TIMEOUT=5
 RECHECK_INTERVAL=600  # UserPromptSubmit 缓存有效期（秒）
 HISTORY_DAYS=30       # ip_history 保留天数
 
+# ─── 探测 Python 解释器（兼容 Windows/macOS/Linux）────────────────────────────
+# Windows Git Bash 中 python3 指向 Windows Store 别名（不可用），需回退到 python
+
+_detect_python() {
+    # 优先用 python3，但先验证它真正可执行（Windows Store 别名会静默失败）
+    if command -v python3 &>/dev/null && python3 -c "import sys; sys.exit(0)" 2>/dev/null; then
+        echo "python3"
+    elif command -v python &>/dev/null && python -c "import sys; sys.exit(0)" 2>/dev/null; then
+        echo "python"
+    else
+        echo ""
+    fi
+}
+
+PYTHON=$(_detect_python)
+if [ -z "$PYTHON" ]; then
+    echo "[ip-guard] 错误：未找到可用的 Python 解释器（需要 Python 3）" >&2
+    exit 1
+fi
+
 # ─── 初始化缓存目录 ───────────────────────────────────────────────────────────
 
 if ! mkdir -p "$CACHE_DIR"; then
@@ -53,7 +73,7 @@ log() {
 # 用于 UserPromptSubmit 的快速比对，开销极小
 query_current_ip() {
     curl -s --max-time "$CURL_TIMEOUT" "https://api.ipify.org?format=json" 2>/dev/null \
-        | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ip',''))" 2>/dev/null
+        | $PYTHON -c "import sys,json; d=json.load(sys.stdin); print(d.get('ip',''))" 2>/dev/null
 }
 
 # 简单校验 IPv4 格式，防止异常值拼接进 URL
@@ -61,7 +81,7 @@ _validate_ipv4() {
     [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
 }
 
-# 完整地理查询：单次 python3 解析所有字段，避免多次启动解释器
+# 完整地理查询：单次 python 调用解析所有字段，避免多次启动解释器
 # 参数 $1: 指定 IP（可选，留空则查当前出口 IP）
 # 输出: ip|country|region|city|org（竖线分隔）
 query_geo() {
@@ -84,8 +104,8 @@ query_geo() {
 
     result=$(curl -s --max-time "$CURL_TIMEOUT" "$url" 2>/dev/null)
     if [ -n "$result" ]; then
-        # 单次 python3 调用解析所有字段
-        parsed=$(echo "$result" | python3 -c "
+        # 单次 python 调用解析所有字段
+        parsed=$(echo "$result" | $PYTHON -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -114,7 +134,7 @@ except Exception:
 
     result=$(curl -s --max-time "$CURL_TIMEOUT" "$url" 2>/dev/null)
     if [ -n "$result" ]; then
-        parsed=$(echo "$result" | python3 -c "
+        parsed=$(echo "$result" | $PYTHON -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -168,7 +188,7 @@ append_history() {
 # 清理超过 HISTORY_DAYS 天的历史记录（原子写入，防止文件损坏）
 cleanup_old_history() {
     [ ! -f "$HISTORY_FILE" ] && return
-    python3 - "$HISTORY_FILE" "$HISTORY_DAYS" <<'PYEOF'
+    $PYTHON - "$HISTORY_FILE" "$HISTORY_DAYS" <<'PYEOF'
 import sys, json, os
 from datetime import datetime, timedelta
 
@@ -218,7 +238,7 @@ count_recent_switches() {
 # 格式化历史记录为对齐表格
 format_history_table() {
     [ ! -f "$HISTORY_FILE" ] && echo "  （暂无历史记录）" && return
-    python3 - "$HISTORY_FILE" <<'PYEOF'
+    $PYTHON - "$HISTORY_FILE" <<'PYEOF'
 import sys, json
 
 entries = []
