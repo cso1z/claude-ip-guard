@@ -1,0 +1,13 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# Claude Code 本地配置（不提交，成员可本地覆盖）
+.claude/settings.local.json
+
+# 运行时缓存（存储在用户主目录，不属于项目）
+# ~/.cache/claude-ip-guard/ 不在此目录，无需忽略
