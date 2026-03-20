@@ -185,3 +185,7 @@ Members can override locally via `.claude/settings.local.json` (not committed).
 | `api.ipify.org` | Lightweight IP lookup (every prompt) | HTTPS |
 | `ipinfo.io` | Full geo query — primary | HTTPS |
 | `ip-api.com` | Full geo query — fallback | HTTP |
+
+## License
+
+MIT

@@ -186,3 +186,7 @@ claude-ip-guard/
 | `api.ipify.org` | 轻量 IP 查询（每次 prompt） | HTTPS |
 | `ipinfo.io` | 完整地理查询（主） | HTTPS |
 | `ip-api.com` | 完整地理查询（备） | HTTP |
+
+## License
+
+MIT
