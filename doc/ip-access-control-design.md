@@ -36,43 +36,61 @@
 
 ---
 
+## 前置判断（两个 Hook 共用）
+
+每个 Hook 执行的第一步：
+
+```
+ANTHROPIC_BASE_URL 已设置 且 ≠ "https://api.anthropic.com"？
+  └── YES → exit 0，跳过全部检查（用户使用第三方代理，无需保护）
+  └── NO  → 继续执行（原生直连场景，需要检测）
+```
+
+> `ANTHROPIC_BASE_URL` 未设置，或显式设为 `https://api.anthropic.com`，均视为原生直连。
+
+---
+
 ## 触发逻辑
 
 ```
 SessionStart（会话启动，每次必检）
-    └── 读取旧缓存，获取上次已通过的城市（old_city）
-    └── 调用完整 IP 地理查询接口，获取 ip / country / region / city / org
-    └── 写入新缓存（覆盖旧值，供后续 PROMPT hook 复用）
-    └── 执行禁止名单检查 + 城市变化检测
-         ※ 注意：Claude Code 不展示 SessionStart 的 stderr，exit 2 也不阻断会话启动
+    └── 前置判断：非原生直连 → exit 0
+    └── 直连测试：curl api.anthropic.com
+         ├── 可达 → 写入缓存（timestamp|ip）→ exit 0
+         │    ※ 可达说明出口 IP 未被封，无需进一步地理查询
+         └── 不可达 → 调用完整 IP 地理查询（ipinfo.io 主 → ip-api.com 备）
+               ├── 查询失败      → fail-safe，exit 0（不写缓存）
+               ├── IP 在禁用区   → exit 2，输出拦截提示（不写缓存）
+               └── IP 不在禁用区 → fail-safe，exit 0（不写缓存）
+         ※ Claude Code 不展示 SessionStart 的 stderr，exit 2 也不阻断会话启动
          ※ 真正对用户可见的拦截发生在 UserPromptSubmit（用户发第一条消息时）
 
 UserPromptSubmit（每次用户发送消息前）
+    └── 前置判断：非原生直连 → exit 0
     └── 轻量查询：仅获取当前公网 IP（api.ipify.org，开销极小）
+         └── 查询失败 → fail-safe，exit 0
     │
-    ├── IP 相同 且 缓存未过期（< 10min）
-    │   └── 复用缓存结论，做禁止名单检查
-    │   └── 命中禁止名单 → exit 2（用户可见，阻止当前 prompt）
-    │   └── 通过 → exit 0
+    ├── IP 与缓存相同 且 缓存未过期（< 10min）
+    │   └── exit 0（缓存中的 IP 即已验证通过，无需重查）
     │
-    ├── IP 不同
-    │   └── 立即调用完整地理查询（不等 10min）
-    │   └── 更新缓存，执行禁止名单 + 城市变化检测
-    │
-    └── IP 相同 但 缓存已过期（>= 10min）
-        └── 重新调用完整地理查询，更新缓存
-        └── 执行禁止名单 + 城市变化检测
+    └── IP 变化 或 缓存过期（>= 10min）或 无缓存
+        └── 直连测试：curl api.anthropic.com
+             ├── 可达 → 写入缓存（timestamp|ip）→ exit 0
+             └── 不可达 → 调用完整 IP 地理查询
+                   ├── 查询失败      → fail-safe，exit 0（不写缓存）
+                   ├── IP 在禁用区   → exit 2，输出拦截提示（不写缓存）
+                   └── IP 不在禁用区 → fail-safe，exit 0（不写缓存）
 ```
 
 ### 关键设计点
 
-- **IP 变化优先**：IP 一旦变化，立即触发地理查询，不受 10min 限制
-- **10min 兜底**：即使 IP 未变，每 10min 也强制重查一次，防止记录过时
-- **两步查询分离**：
-  - 轻量查询（仅获取当前 IP）：每次 prompt 都执行，开销极小
-  - 完整查询（含地理信息）：仅在 IP 变化或超时时执行，减少接口调用
-- **Fail-safe**：所有接口不可用时一律放行，避免网络故障误拦截
-- **SessionStart 缓存联动**：SessionStart 负责更新缓存；由于 Claude Code 不展示 SessionStart 的 stderr 且 exit 2 不阻断会话，真正对用户可见的拦截统一在 UserPromptSubmit 阶段完成（用户发第一条消息时触发）
+- **非原生直连跳过**：用户配置了第三方代理时，跳过全部检查，不干预其网络选择
+- **直连优先**：直连可达即放行，无需地理查询；直连不可达才触发 geo 作为辅助判断
+- **可达即安全**：`api.anthropic.com` 可达说明出口 IP 未被封禁，地理查询在此场景下冗余
+- **缓存即白名单**：缓存只在直连成功时写入，缓存中的 IP 即已验证通过，复用时无需再查
+- **IP 变化或超期重检**：IP 一旦变化立即重走完整流程；即使 IP 未变，10min 后也强制重检
+- **Fail-safe**：地理查询接口不可用，或查询结果显示 IP 不在禁用区，均放行
+- **SessionStart 缓存联动**：SessionStart 直连成功时写缓存；UserPromptSubmit 复用，实现会话内快速放行
 
 ---
 
@@ -86,7 +104,6 @@ UserPromptSubmit（每次用户发送消息前）
   无法使用 Claude。请切换网络后重试。
   ```
 
-- **城市切换提示**（不拦截访问，仅警告，见下方分级）
 - **不拦截时**：脚本正常退出（exit 0），用户无感知
 
 ---
@@ -126,71 +143,15 @@ UserPromptSubmit（每次用户发送消息前）
   [Unix时间戳]|[country_code]|[city]|[ip]
   ```
 
-- **缓存有效期**：10 分钟（600 秒），IP 变化时立即失效
-- **异常处理**：接口请求失败时**放行**用户（不因网络问题误拦截），并记录日志
+  > 直连成功时 country/city 为空（未做地理查询）：`1742380000|||192.168.1.1`
+
+- **写入时机**：仅在直连 `api.anthropic.com` 成功时写入；拦截路径（exit 2）和 fail-safe 路径均不写缓存
+- **缓存即白名单**：缓存中的 IP 代表已通过直连验证，`UserPromptSubmit` 命中时无需重查，直接放行
+- **缓存有效期**：10 分钟（600 秒）；IP 变化或过期时，重走完整检测流程
+- **异常处理**：地理查询接口失败时**放行**用户（fail-safe），不因网络故障误拦截
 
 ---
 
-## IP 城市切换异常检测
-
-### 触发条件
-
-每次完整地理查询后执行以下逻辑：
-
-- **城市发生变化** 且该 IP 不在历史中 → 写入历史，展示分级警告（exit 2 阻止当前 prompt，重新发送后可继续）
-- **城市未变化** 且该 IP 为首次出现 → 静默写入历史（仅记录，不提示用户）
-- **IP 已在历史中** → 不重复写入，不提示
-
-### 历史记录
-
-- 记录每次城市切换的完整信息，保留最近 **30 天**
-- 存储位置：`~/.cache/claude-ip-guard/ip_history.jsonl`（每行一条 JSON）
-- 记录字段：
-
-  ```json
-  {
-    "time": "2026-03-20 10:00:01",
-    "ip": "192.166.82.233",
-    "country": "US",
-    "region": "Utah",
-    "city": "Salt Lake City",
-    "org": "EFUsoft LLC"
-  }
-  ```
-
-- **去重规则**：按 IP 去重，同一 IP 不重复写入历史（即使城市变化）
-
-### 提示展示格式
-
-提示内容包含两部分：
-
-1. **等级警告语**（根据当日城市切换次数）
-2. **最近 30 天 IP 历史表格**
-
-```
-[提示] 检测到网络城市发生变化（北京 → Salt Lake City），请确认网络环境正常。
-
-最近 30 天 IP 使用记录：
-  时间                  IP                 完整地址
-  --------------------------------------------------------------------------------
-  2026-03-20 10:00:01  192.166.82.233     US · Utah · Salt Lake City (EFUsoft LLC)
-  2026-03-19 08:30:00  1.2.3.4            CN · 北京市 · 北京 (China Telecom)
-```
-
-### 切换次数与提示等级
-
-统计范围：`ip_history.jsonl` 中的全部条目数（文件本身只保留近 30 天，因此等同于近 30 天总计）。城市变化时在写入前取值 +1 作为展示次数。
-
-| 切换次数（近 30 天） | 等级 | 提示语 |
-|---------------------|------|--------|
-| 第 1 次 | 信息 | `[提示] 检测到网络城市发生变化（{旧城市} → {新城市}），请确认网络环境正常。` |
-| 第 2～3 次 | 注意 | `[注意] 近 30 天已发生 {N} 次城市切换（{旧城市} → {新城市}），请检查网络是否稳定。` |
-| 第 4～6 次 | 警告 | `[警告] 近 30 天城市切换次数异常（{N} 次），存在账号安全风险，请确认是本人操作。` |
-| 第 7 次及以上 | 严重 | `[严重警告] 近 30 天城市切换次数过高（{N} 次），账号可能存在异常使用，强烈建议立即排查。` |
-
-> 城市切换警告通过 exit 2 触发，当前 prompt **不会被 Claude 处理**；用户重新发送 prompt 后可正常继续使用。
-
----
 
 ## 文件结构
 
@@ -298,27 +259,27 @@ bash claude-ip-guard/install.sh --global
 
 | 风险 | 应对策略 |
 |------|---------|
-| IP 接口超时/不可用 | 设置 5s 超时，失败时放行（fail-safe），避免误拦截 |
-| VPN 导致 IP 不准确 | 属于预期行为，IP 层面无法区分 VPN |
-| 缓存文件损坏 | 时间戳格式校验，异常时强制重查；历史文件原子写入（`os.replace`） |
+| 直连测试超时影响体验 | 设置 5s connect-timeout，最坏等待 5s 后进入 geo 查询 |
+| IP 接口超时/不可用 | 设置 5s 超时，失败时 fail-safe 放行，避免误拦截 |
+| 用户配置了第三方代理但仍是原生地址 | 前置判断仅跳过明确非 Anthropic 的地址，原生地址仍受保护 |
+| 缓存文件损坏 | 时间戳格式校验，异常时强制重走完整流程 |
 | SessionStart exit 2 不可见 | SessionStart 负责写缓存；PROMPT hook 负责可见拦截（用户发第一条消息时生效） |
 | 脚本权限问题 | `install.sh` 自动执行 `chmod +x`，手动安装需确保有执行权限 |
 | 团队成员本地覆盖 | 可在 `settings.local.json` 中覆盖（该文件不提交仓库） |
-| Windows 兼容性 | 脚本依赖 bash + python3，支持 macOS / Linux / WSL；纯 Windows CMD 不支持 |
+| Windows 兼容性 | 脚本依赖 bash + python3，支持 macOS / Linux / WSL / Git Bash；纯 Windows CMD 不支持 |
 
 ---
 
 ## 实现清单
 
-- [x] `ip-guard-lib.sh` 共享库（查询、缓存、历史、拦截）
+- [x] `ip-guard-lib.sh` 共享库（查询、缓存、拦截）
 - [x] `check-ip-on-start.sh` SessionStart hook
 - [x] `check-ip-on-prompt.sh` UserPromptSubmit hook
 - [x] `.claude/settings.json` Hook 配置
 - [x] `install.sh` 安装脚本
 - [x] 按天分割日志（`~/.cache/claude-ip-guard/ip-guard-YYYY-MM-DD.log`）
-- [x] 缓存迁移至 `~/.cache/claude-ip-guard/`
-- [x] IP 历史记录写入 `ip_history.jsonl`
-- [x] 30 天历史清理（原子写入）
-- [x] 城市切换检测与去重（按 IP 去重）
-- [x] 分级提示语（1 次 / 2-3 次 / 4-6 次 / 7+ 次）
-- [x] 历史记录表格格式化展示
+- [ ] 前置判断：`ANTHROPIC_BASE_URL` 非原生时跳过检查
+- [ ] 直连测试：`api.anthropic.com` 可达时直接放行
+- [ ] 缓存写入时机收窄：仅直连成功时写入
+- [ ] `UserPromptSubmit` 缓存命中逻辑简化：IP 相同即放行，无需禁用区二次判断
+- [ ] 移除城市切换检测相关逻辑（`ip_history.jsonl`、`process_geo_result` 城市部分）
