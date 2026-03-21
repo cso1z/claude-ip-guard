@@ -1,9 +1,10 @@
 #!/bin/bash
-# install.sh - 将 claude-ip-guard 安装到目标项目或全局 Claude 配置
+# install.sh - 将 claude-ip-guard 安装到全局或指定项目
 # 用法:
-#   bash install.sh                        # 安装到当前目录（项目级）
-#   bash install.sh /path/to/project       # 安装到指定项目（项目级）
-#   bash install.sh --global               # 安装到全局 ~/.claude（对所有项目生效）
+#   bash install.sh                        # 安装到全局 ~/.claude（默认）
+#   bash install.sh --global               # 同上
+#   bash install.sh --project              # 安装到当前目录（项目级）
+#   bash install.sh --project /path/to/p   # 安装到指定项目（项目级）
 
 set -e
 
@@ -27,18 +28,19 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # ── 解析参数 ──────────────────────────────────────────────────────────────────
-GLOBAL=false
+PROJECT=false
 TARGET_DIR=""
 
 for arg in "$@"; do
     case "$arg" in
-        --global) GLOBAL=true ;;
-        *)        TARGET_DIR="$arg" ;;
+        --global)  echo ">> --global 已是默认行为，等同于不传参数" ;;
+        --project) PROJECT=true ;;
+        *)         TARGET_DIR="$arg" ;;
     esac
 done
 
 # ── 确定安装目标和 Hook 命令路径 ──────────────────────────────────────────────
-if $GLOBAL; then
+if ! $PROJECT; then
     TARGET_CLAUDE_DIR="$HOME/.claude"
     TARGET_SCRIPTS_DIR="$TARGET_CLAUDE_DIR/scripts"
     TARGET_SETTINGS="$TARGET_CLAUDE_DIR/settings.json"

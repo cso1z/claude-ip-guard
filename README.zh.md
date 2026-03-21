@@ -2,16 +2,19 @@
 
 [English](./README.md) | 中文
 
-基于 IP 地理位置的 Claude Code 访问控制插件。当检测到当前 IP 位于受限国家时，拦截用户输入；当检测到频繁城市切换时，发出分级警告。
+基于 IP 地理位置和直连检测的 Claude Code 访问控制插件。当 IP 处于受限国家且直连不通时硬拦截；当出现从未见过的新 IP 时软拦截。
 
 ## 功能特性
 
-- **国家拦截** — IP 位于受限地区时阻止访问（exit 2，用户可见提示）
-- **城市切换检测** — 网络位置发生变化时发出警告，根据近 30 天切换次数分级提示
-- **智能缓存** — 每次 prompt 仅做轻量 IP 比对，仅在 IP 变化或超过 10 分钟时触发完整地理查询
-- **30 天 IP 历史** — 记录所有 IP 变化的完整地理信息，按 IP 去重
-- **Fail-safe** — 接口不可用时一律放行，避免网络故障导致误拦截
-- **双接口** — `ipinfo.io`（HTTPS，主）、`ip-api.com`（HTTP，备）
+- **代理感知** — `ANTHROPIC_BASE_URL` 指向第三方代理时自动跳过全部检测，不干预用户网络选择
+- **直连检测** — 每次检测都测试 `api.anthropic.com` 可达性，记录 `direct_ok`，由此决定后续策略
+- **国家硬拦截** — 直连不通且 IP 在受限国家时，exit 2 拦截（用户可见提示）
+- **分流代理识别** — 直连通但 geo 显示受限国家时，视为分流代理场景放行，不写缓存/历史
+- **新 IP 软拦截** — 直连通且 IP 合规但为首次出现时，exit 2 软拦截并附分级警告；用户重发即可继续
+- **30 天 IP 历史** — 按 IP 去重，每个 IP 只记录一次，保留近 30 天
+- **智能缓存** — 每次 prompt 做轻量 IP 比对；缓存命中（IP 相同且 < 10 分钟）跳过所有网络检测
+- **Fail-safe** — 任何查询失败均放行，避免网络故障导致误拦截
+- **双 geo 接口** — `ipinfo.io`（HTTPS，主）、`ip-api.com`（HTTP，备）
 - **共享库** — 核心逻辑集中在 `ip-guard-lib.sh`，两个 hook 脚本共同引用
 - **全局或项目安装** — 一条命令安装到单个项目或机器上所有项目
 
@@ -46,42 +49,41 @@
 ## 工作原理
 
 ```
-SessionStart（每次会话启动，必检）
-└── 读取旧缓存 → 获取上次已通过的城市（old_city）
-└── 完整地理查询：ip / country / region / city / org
-└── 写入新缓存（供后续 PROMPT hook 复用）
-└── 国家在禁止列表？ → exit 2（Claude Code 不展示，不阻断会话*）
-└── 城市发生变化？   → exit 2（Claude Code 不展示，不阻断会话*）
+两个 Hook 共同前置判断
+└── ANTHROPIC_BASE_URL 已设置 且 ≠ "https://api.anthropic.com"？
+    └── YES → 跳过全部检测（第三方代理，不干预）
+    └── NO  → 继续执行（原生 Anthropic 直连场景）
 
-    * 真正对用户可见的拦截发生在 UserPromptSubmit（用户发第一条消息时）
+SessionStart（每次会话启动）
+└── 直连测试 api.anthropic.com → 记录 direct_ok
+└── Geo 查询（ipinfo.io 主 → ip-api.com 备）— 始终执行
+    └── 查询失败    → fail-safe，exit 0
+    └── direct_ok=false + IP 在禁用区 → exit 2 硬拦截
+    └── direct_ok=false + IP 不在禁用区 → fail-safe，exit 0
+    └── direct_ok=true  + IP 在禁用区 → 分流代理场景，exit 0（不写缓存/历史）
+    └── direct_ok=true  + IP 不在禁用区 → 检查 IP 历史
+        ├── IP 已知 → 写缓存 → exit 0
+        └── IP 新出现 → 写历史 + 分级警告 → exit 2 软拦截
 
 UserPromptSubmit（每次用户发送消息前）
-└── 轻量查询：仅获取当前公网 IP
-    │
-    ├── IP 相同 + 缓存未过期（< 10min）
-    │   └── 复用缓存 → 禁止名单检查 → 命中则 exit 2（用户可见）
-    │
-    ├── IP 变化
-    │   └── 立即完整地理查询 → 更新缓存
-    │   └── 禁止名单 + 城市变化检测 → 触发则 exit 2（用户可见）
-    │
-    └── IP 相同 + 缓存过期（>= 10min）
-        └── 完整地理查询 → 更新缓存
-        └── 禁止名单 + 城市变化检测 → 触发则 exit 2（用户可见）
+└── 轻量查询：获取当前公网 IP
+    └── 失败 → fail-safe，exit 0
+└── 缓存命中：IP 相同且 < 10min → exit 0（已验证通过）
+└── 否则 → 直连测试 + Geo 查询 → 同 SessionStart 逻辑
 ```
 
-> **说明**：Claude Code 不展示 SessionStart hook 的 stderr，且 exit 2 不阻断会话启动。所有对用户可见的拦截均由 UserPromptSubmit hook 完成。
+> **说明**：Claude Code 不展示 SessionStart hook 的 stderr，且 exit 2 不阻断会话启动。所有对用户可见的拦截均由 UserPromptSubmit hook 完成（用户发第一条消息时触发）。
 
-## 城市切换警告
+## 新 IP 出现警告
 
-检测到城市变化且该 IP 不在历史中时，触发分级警告（exit 2 阻止当前 prompt，用户重新发送后可继续）：
+直连通且 IP 合规时，若该 IP 为首次出现，触发分级软拦截（exit 2 阻止当前 prompt，用户**重新发送**即可继续——第二次发送时 IP 已在历史中，正常放行）：
 
-| 近 30 天切换次数 | 等级 | 提示前缀 |
-|----------------|------|---------|
-| 第 1 次 | 信息 | `[提示]` |
-| 第 2～3 次 | 注意 | `[注意]` |
-| 第 4～6 次 | 警告 | `[警告]` |
-| 第 7 次及以上 | 严重 | `[严重警告]` |
+| 近 30 天不同 IP 数 | 等级 | 提示前缀 |
+|-------------------|------|---------|
+| 第 1 个 | 信息 | `[提示]` |
+| 第 2～3 个 | 注意 | `[注意]` |
+| 第 4～6 个 | 警告 | `[警告]` |
+| 第 7 个及以上 | 严重 | `[严重警告]` |
 
 每次警告附带近 30 天 IP 历史记录表格。
 
@@ -113,7 +115,7 @@ UserPromptSubmit（每次用户发送消息前）
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git
-bash claude-ip-guard/install.sh --global
+bash claude-ip-guard/install.sh
 ```
 
 **第四步 — 验证是否正常运行**
@@ -130,12 +132,14 @@ cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
 
 ## 安装方式
 
-### 全局安装（对本机所有项目生效）
+### 全局安装（对本机所有项目生效，默认）
 
 > **Windows 用户**：以下命令需在 **Git Bash** 中执行，不能使用 CMD 或 PowerShell。右键任意文件夹选择 "Git Bash Here" 即可打开。
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git
+bash claude-ip-guard/install.sh          # 不传参数即为全局（推荐）
+# 或显式指定
 bash claude-ip-guard/install.sh --global
 ```
 
@@ -144,11 +148,11 @@ bash claude-ip-guard/install.sh --global
 ### 项目级安装（仅对指定项目生效）
 
 ```bash
-# 安装到指定项目
-bash claude-ip-guard/install.sh /path/to/your/project
-
 # 安装到当前目录
-bash claude-ip-guard/install.sh
+bash claude-ip-guard/install.sh --project
+
+# 安装到指定项目
+bash claude-ip-guard/install.sh --project /path/to/your/project
 ```
 
 脚本安装至 `.claude/scripts/`，hook 命令使用相对路径。
@@ -190,7 +194,7 @@ bash claude-ip-guard/install.sh
 
 ```
 claude-ip-guard/
-├── install.sh                       # 安装脚本（支持 --global）
+├── install.sh                       # 安装脚本（默认全局，--project 指定项目级）
 ├── doc/
 │   └── ip-access-control-design.md  # 完整设计文档
 └── .claude/
@@ -253,6 +257,7 @@ BLOCKED_COUNTRIES=(
 
 | 接口 | 用途 | 协议 |
 |------|------|------|
+| `api.anthropic.com` | 直连检测（主判断门） | HTTPS |
 | `api.ipify.org` | 轻量 IP 查询（每次 prompt） | HTTPS |
 | `ipinfo.io` | 完整地理查询（主） | HTTPS |
 | `ip-api.com` | 完整地理查询（备） | HTTP |

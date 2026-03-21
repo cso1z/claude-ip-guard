@@ -2,18 +2,21 @@
 
 English | [中文](./README.zh.md)
 
-A Claude Code hook plugin that blocks access based on IP geolocation. Intercepts user prompts when the current IP is located in a restricted country or region, and warns users when frequent city switching is detected.
+A Claude Code hook plugin that blocks access based on IP geolocation and direct connectivity. Intercepts user prompts when the current IP is in a restricted country, and soft-blocks on new unrecognized IPs.
 
 > Prevent Claude account bans caused by IP geolocation issues · 防止因 IP 地理位置异常导致的 Claude 封号、账号被封问题
 
 ## Features
 
-- **Country blocking** — Blocks access for IPs in restricted countries (exit 2, user-visible message)
-- **City-switch detection** — Warns users when network location changes, with graded alerts based on 30-day switch history
-- **Smart caching** — Lightweight IP check on every prompt; full geo query only when IP changes or every 10 minutes
-- **30-day IP history** — Records all IP changes with full geo info; deduplicates by IP
-- **Fail-safe** — API failures always allow access (no false blocking due to network issues)
-- **Dual API** — `ipinfo.io` (HTTPS, primary), `ip-api.com` (HTTP, fallback)
+- **Proxy-aware** — Automatically skips all checks when `ANTHROPIC_BASE_URL` points to a third-party proxy; only native Anthropic connections are inspected
+- **Direct connectivity check** — Tests `api.anthropic.com` on every check; result (`direct_ok`) determines the blocking strategy
+- **Country blocking** — When direct connection fails and IP is in a restricted country, access is hard-blocked (exit 2, user-visible message)
+- **Split-tunnel detection** — When direct connection succeeds but geo shows a restricted country, treats it as a split-tunnel proxy and allows access without writing cache/history
+- **New IP soft-block** — When direct connection succeeds and a new unrecognized IP appears, soft-blocks with a graded warning; user can resend to continue
+- **30-day IP history** — Records each unique IP once; deduplicates by IP address
+- **Smart caching** — Lightweight IP check on every prompt; cache hit (same IP, < 10 min) skips all network checks
+- **Fail-safe** — Any query failure always allows access (no false blocking due to network issues)
+- **Dual geo API** — `ipinfo.io` (HTTPS, primary), `ip-api.com` (HTTP, fallback)
 - **Shared library** — Core logic in `ip-guard-lib.sh`, sourced by both hook scripts
 - **Global or per-project install** — One command installs to a single project or all projects on the machine
 
@@ -48,42 +51,41 @@ To customize, edit `BLOCKED_COUNTRIES` in `ip-guard-lib.sh`.
 ## How It Works
 
 ```
-SessionStart (every session)
-└── Read old cache → get previous city (old_city)
-└── Full geo query: ip / country / region / city / org
-└── Write new cache → for reuse by PROMPT hook
-└── Country blocked?  → exit 2 (not visible in Claude Code UI*)
-└── City changed?     → exit 2 (not visible in Claude Code UI*)
+Both hooks — Precondition
+└── ANTHROPIC_BASE_URL set and ≠ "https://api.anthropic.com"?
+    └── YES → skip all checks (third-party proxy, no intervention needed)
+    └── NO  → continue (native Anthropic connection)
 
-    * Real user-visible blocking happens on the first UserPromptSubmit
+SessionStart (every session)
+└── Direct connectivity test → api.anthropic.com → record direct_ok
+└── Geo query (ipinfo.io → ip-api.com fallback) — always runs
+    └── Failed → fail-safe, exit 0
+    └── direct_ok=false + IP in blocklist → exit 2 hard-block
+    └── direct_ok=false + IP not blocked  → fail-safe, exit 0
+    └── direct_ok=true  + IP in blocklist → split-tunnel, exit 0 (no cache/history)
+    └── direct_ok=true  + IP not blocked  → check IP history
+        ├── IP known → write cache → exit 0
+        └── IP new   → write history + graded warning → exit 2 soft-block
 
 UserPromptSubmit (every prompt)
-└── Lightweight query: get current public IP only
-    │
-    ├── IP same + cache < 10min
-    │   └── Reuse cache → check blocked list → exit 2 if blocked (visible)
-    │
-    ├── IP changed
-    │   └── Immediate full geo query → update cache
-    │   └── Check blocked + city change → exit 2 if triggered (visible)
-    │
-    └── IP same + cache >= 10min
-        └── Full geo query → update cache
-        └── Check blocked + city change → exit 2 if triggered (visible)
+└── Lightweight query: get current public IP
+    └── Failed → fail-safe, exit 0
+└── Cache check: IP same + cache < 10min → exit 0 (already validated)
+└── Otherwise → direct test + geo query → same logic as SessionStart
 ```
 
-> **Note:** Claude Code does not display `stderr` from `SessionStart` hooks, and `exit 2` does not prevent the session from starting. All user-visible blocking is handled by the `UserPromptSubmit` hook.
+> **Note:** Claude Code does not display `stderr` from `SessionStart` hooks, and `exit 2` does not prevent the session from starting. All user-visible blocking is handled by the `UserPromptSubmit` hook (triggered on the user's first message).
 
-## City-Switch Alerts
+## New IP Alerts
 
-When a city change is detected and the IP is not in history, a graded warning is shown (via exit 2 — the current prompt is blocked; the user can resend to continue):
+When a new unrecognized IP appears (direct connection succeeds, IP not in restricted countries), a graded warning is shown via exit 2. The current prompt is blocked; the user can **resend to continue** (on resend the IP is already in history and passes through):
 
-| Switches (last 30 days) | Level | Message prefix |
-|-------------------------|-------|----------------|
-| 1 | Info | `[提示]` |
-| 2 – 3 | Notice | `[注意]` |
-| 4 – 6 | Warning | `[警告]` |
-| 7+ | Critical | `[严重警告]` |
+| Unique IPs (last 30 days) | Level | Message prefix |
+|---------------------------|-------|----------------|
+| 1st | Info | `[提示]` |
+| 2nd – 3rd | Notice | `[注意]` |
+| 4th – 6th | Warning | `[警告]` |
+| 7th+ | Critical | `[严重警告]` |
 
 Each alert includes a formatted table of the last 30 days of IP history.
 
@@ -115,7 +117,7 @@ Right-click any folder in Explorer and select **"Git Bash Here"**, then run:
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git
-bash claude-ip-guard/install.sh --global
+bash claude-ip-guard/install.sh
 ```
 
 **Step 4 — Verify**
@@ -132,12 +134,14 @@ cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
 
 ## Installation
 
-### Global install (applies to all projects on this machine)
+### Global install (applies to all projects on this machine, default)
 
 > **Windows users**: Run the commands below in **Git Bash**, not CMD or PowerShell. Right-click any folder and select "Git Bash Here" to open it.
 
 ```bash
 git clone https://github.com/your-username/claude-ip-guard.git
+bash claude-ip-guard/install.sh          # no flag = global (recommended)
+# or explicitly
 bash claude-ip-guard/install.sh --global
 ```
 
@@ -146,10 +150,11 @@ Scripts are copied to `~/.claude/scripts/` and hooks use absolute paths.
 ### Project install (applies to one project only)
 
 ```bash
-bash claude-ip-guard/install.sh /path/to/your/project
+# install into the current directory
+bash claude-ip-guard/install.sh --project
 
-# or install into the current directory
-bash claude-ip-guard/install.sh
+# install into a specific project
+bash claude-ip-guard/install.sh --project /path/to/your/project
 ```
 
 Scripts are copied to `.claude/scripts/` and hooks use relative paths.
@@ -191,7 +196,7 @@ The installer will:
 
 ```
 claude-ip-guard/
-├── install.sh                      # Installer (--global or project)
+├── install.sh                      # Installer (global by default, --project for per-project)
 ├── doc/
 │   └── ip-access-control-design.md # Full design document
 └── .claude/
@@ -254,6 +259,7 @@ Members can override locally via `.claude/settings.local.json` (not committed).
 
 | API | Purpose | Protocol |
 |-----|---------|----------|
+| `api.anthropic.com` | Direct connectivity check (primary gate) | HTTPS |
 | `api.ipify.org` | Lightweight IP lookup (every prompt) | HTTPS |
 | `ipinfo.io` | Full geo query — primary | HTTPS |
 | `ip-api.com` | Full geo query — fallback | HTTP |
