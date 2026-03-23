@@ -385,17 +385,24 @@ process_geo_result() {
         log "已知 IP，写缓存，放行：IP=${ip} COUNTRY=${country}"
     else
         log "IP 历史未命中：IP=${ip}（新 IP）"
-        # 新 IP，写历史 + 分级警告 → exit 2 软拦截
+        # 新 IP，写历史
         # count_recent_ips 对 IP 去重，防多进程竞态导致计数失真
         local count
         count=$(count_recent_ips)
         count=$((count + 1))
         append_history "$ip" "$country" "$region" "$city" "$org"
         cleanup_old_history
-        log "新 IP 出现，写历史，软拦截：IP=${ip} COUNTRY=${country}（近 30 天第 ${count} 个 IP）"
-        local warning
-        warning=$(build_new_ip_warning "$ip" "$count")
-        echo "$warning" >&2
-        exit 2
+        if [ "$count" -eq 1 ]; then
+            # 第一条 IP：建立基准，直接写缓存放行，无需提醒
+            echo "$(date +%s)|${country}|${city}|${ip}" > "$CACHE_FILE"
+            log "首个 IP，写历史+缓存，放行：IP=${ip} COUNTRY=${country}"
+        else
+            # 第二条起：出现新 IP，软拦截 + 分级警告
+            log "新 IP 出现，写历史，软拦截：IP=${ip} COUNTRY=${country}（近 30 天第 ${count} 个 IP）"
+            local warning
+            warning=$(build_new_ip_warning "$ip" "$count")
+            echo "$warning" >&2
+            exit 2
+        fi
     fi
 }
