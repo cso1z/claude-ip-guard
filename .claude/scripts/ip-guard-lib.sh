@@ -102,7 +102,10 @@ test_direct() {
 # 轻量查询：仅获取当前公网 IP，不含地理信息
 # 用于 UserPromptSubmit 快速比对，开销极小
 query_current_ip() {
-    curl -s --max-time "$CURL_TIMEOUT" "https://api.ipify.org?format=json" 2>/dev/null \
+    curl -s \
+        --max-time        "$CURL_TIMEOUT" \
+        --connect-timeout "$CURL_TIMEOUT" \
+        "https://api.ipify.org?format=json" 2>/dev/null \
         | $PYTHON -c "import sys,json; d=json.load(sys.stdin); print(d.get('ip',''))" 2>/dev/null
 }
 
@@ -135,7 +138,7 @@ query_geo() {
     fi
 
     log "geo 请求主接口：${url}"
-    result=$(curl -s --max-time "$CURL_TIMEOUT" "$url" 2>/dev/null)
+    result=$(curl -s --max-time "$CURL_TIMEOUT" --connect-timeout "$CURL_TIMEOUT" "$url" 2>/dev/null)
     if [ -n "$result" ]; then
         parsed=$(echo "$result" | $PYTHON -c "
 import sys, json
@@ -167,7 +170,7 @@ except Exception:
     fi
 
     log "geo 请求备用接口：${url}"
-    result=$(curl -s --max-time "$CURL_TIMEOUT" "$url" 2>/dev/null)
+    result=$(curl -s --max-time "$CURL_TIMEOUT" --connect-timeout "$CURL_TIMEOUT" "$url" 2>/dev/null)
     if [ -n "$result" ]; then
         parsed=$(echo "$result" | $PYTHON -c "
 import sys, json
