@@ -82,19 +82,38 @@ is_native_connection() {
 }
 
 # ─── 直连测试 ─────────────────────────────────────────────────────────────────
-# 测试能否与 api.anthropic.com 建立 TCP+TLS 连接
-# 任何 HTTP 状态码（含 4xx 认证失败）= 握手成功 = 可达
-# 返回 0（可达）或 1（超时/拒绝）
+# 走真实 Anthropic API 端点进行探测（无需真实 key）
+# 目标：区分「网络不可达」与「链路可达但被封锁」
+#
+# 判定标准：
+# - 任何 HTTP 响应（含 401/4xx/5xx）→ 链路可达 → 直连 OK
+# - 403：明确被封锁（WAF/区域限制）→ 直连 FAIL
+# - 000/空：连接超时或拒绝 → 直连 FAIL
+# 返回 0（可达）或 1（不可达/被封锁）
 
 test_direct() {
-    local status
+    local status api_url payload
+    api_url="${ANTHROPIC_DIRECT%/}/v1/messages"
+    payload='{"model":"claude-3-5-sonnet-20240620","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}'
+
     status=$(curl -s \
-        --max-time        "$CURL_TIMEOUT" \
+        --max-time "$CURL_TIMEOUT" \
         --connect-timeout "$CURL_TIMEOUT" \
+        -X POST \
+        -H "content-type: application/json" \
+        -H "anthropic-version: 2023-06-01" \
+        -H "x-api-key: sk-ant-api03-dummy" \
+        --data "$payload" \
         -o /dev/null \
         -w "%{http_code}" \
-        "$ANTHROPIC_DIRECT" 2>/dev/null)
-    [[ "$status" =~ ^[1-9][0-9]{2}$ ]]
+        "$api_url" 2>/dev/null)
+
+    log "返回 status: ${status:-<empty>}"
+    [ -z "$status" ] && return 1
+    case "$status" in
+        403)     return 2 ;;  # 明确被拒（WAF/区域封锁），最高优先级
+        *)       return 0 ;;
+    esac
 }
 
 # ─── IP 查询 ──────────────────────────────────────────────────────────────────

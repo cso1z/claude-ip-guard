@@ -5,6 +5,7 @@ Thumbs.db
 # 编辑器
 .vscode/
 .idea/
+temp/
 
 # Claude Code 本地配置（不提交，成员可本地覆盖）
 .claude/settings.local.json
