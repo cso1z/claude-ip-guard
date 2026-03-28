@@ -1,268 +1,163 @@
 # claude-ip-guard
 
-English | [中文](./README.zh.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL%20%7C%20Windows%20(Git%20Bash)-blue)](#安装)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-Hook%20Plugin-blueviolet)](https://claude.ai/code)
 
-A Claude Code hook plugin that blocks access based on IP geolocation and direct connectivity. Intercepts user prompts when the current IP is in a restricted country, and soft-blocks on new unrecognized IPs.
+防止 Claude Code 因 IP 地理位置异常导致账号被封的 Hook 插件。
 
-> Prevent Claude account bans caused by IP geolocation issues · 防止因 IP 地理位置异常导致的 Claude 封号、账号被封问题
+自动检测每次请求的出口 IP — 受限国家直接拦截，新 IP 给出分级警告。
 
-## Features
+> 如果这个项目对你有帮助，欢迎点个 ⭐ Star — Star 后可及时收到更新通知，我们会持续根据 Anthropic 政策变化和用户反馈迭代优化。
 
-- **Proxy-aware** — Automatically skips all checks when `ANTHROPIC_BASE_URL` points to a third-party proxy; only native Anthropic connections are inspected
-- **Direct connectivity check** — Tests `api.anthropic.com` on every check; result (`direct_ok`) determines the blocking strategy
-- **Country blocking** — When direct connection fails and IP is in a restricted country, access is hard-blocked (exit 2, user-visible message)
-- **Split-tunnel detection** — When direct connection succeeds but geo shows a restricted country, treats it as a split-tunnel proxy and allows access without writing cache/history
-- **New IP soft-block** — When direct connection succeeds and a new unrecognized IP appears, soft-blocks with a graded warning; user can resend to continue
-- **30-day IP history** — Records each unique IP once; deduplicates by IP address
-- **Smart caching** — Lightweight IP check on every prompt; cache hit (same IP, < 10 min) skips all network checks
-- **Fail-safe** — Any query failure always allows access (no false blocking due to network issues)
-- **Dual geo API** — `ipinfo.io` (HTTPS, primary), `ip-api.com` (HTTP, fallback)
-- **Shared library** — Core logic in `ip-guard-lib.sh`, sourced by both hook scripts
-- **Global or per-project install** — One command installs to a single project or all projects on the machine
+## 功能特性
 
-## Blocked Countries
+- **受限国家拦截** — IP 位于受限国家时阻断请求，附带可见提示
+- **新 IP 分级警告** — 首次出现的 IP 触发软拦截并给出警告，重新发送即可继续
+- **代理场景兼容** — 第三方中转 API 或 VPN 分流时自动识别，不误拦
+- **网络故障不误拦** — 任何检测失败均放行，不因网络问题阻断正常使用
 
-Based on [Anthropic's supported regions](https://www.anthropic.com/supported-countries) and U.S. OFAC export controls:
+![拦截效果](./doc/screenshots/blocked.png)
 
-| Country / Region | ISO Code | Reason |
-|------------------|----------|--------|
-| China (mainland) | `CN` | Regulatory / geopolitical |
-| Russia | `RU` | U.S. sanctions |
-| North Korea | `KP` | OFAC sanctions |
-| Iran | `IR` | OFAC sanctions |
-| Syria | `SY` | OFAC sanctions |
-| Cuba | `CU` | OFAC sanctions |
-| Belarus | `BY` | Sanctions-related |
-| Venezuela | `VE` | Not in supported list |
-| Myanmar | `MM` | Not in supported list |
-| Libya | `LY` | Not in supported list |
-| Somalia | `SO` | Not in supported list |
-| Yemen | `YE` | Not in supported list |
-| Mali | `ML` | Not in supported list |
-| Central African Republic | `CF` | Not in supported list |
-| South Sudan | `SS` | Not in supported list |
-| DR Congo | `CD` | Not in supported list |
-| Eritrea | `ER` | Not in supported list |
-| Afghanistan | `AF` | Not in supported list |
-| Ukraine | `UA` | Russian-occupied regions restricted; full-country blocked (script cannot filter sub-regions) |
+## 安装
 
-To customize, edit `BLOCKED_COUNTRIES` in `ip-guard-lib.sh`.
+**环境要求**：`bash`、`curl`、`python3`（或 `python`）。支持 macOS、Linux、WSL、Windows（Git Bash）。
 
-## How It Works
-
-```
-Both hooks — Precondition
-└── ANTHROPIC_BASE_URL set and ≠ "https://api.anthropic.com"?
-    └── YES → skip all checks (third-party proxy, no intervention needed)
-    └── NO  → continue (native Anthropic connection)
-
-SessionStart (every session)
-└── Direct connectivity test → api.anthropic.com → record direct_ok
-└── Geo query (ipinfo.io → ip-api.com fallback) — always runs
-    └── Failed → fail-safe, exit 0
-    └── direct_ok=false + IP in blocklist → exit 2 hard-block
-    └── direct_ok=false + IP not blocked  → fail-safe, exit 0
-    └── direct_ok=true  + IP in blocklist → split-tunnel, exit 0 (no cache/history)
-    └── direct_ok=true  + IP not blocked  → check IP history
-        ├── IP known → write cache → exit 0
-        └── IP new   → write history + graded warning → exit 2 soft-block
-
-UserPromptSubmit (every prompt)
-└── Lightweight query: get current public IP
-    └── Failed → fail-safe, exit 0
-└── Cache check: IP same + cache < 10min → exit 0 (already validated)
-└── Otherwise → direct test + geo query → same logic as SessionStart
-```
-
-> **Note:** Claude Code does not display `stderr` from `SessionStart` hooks, and `exit 2` does not prevent the session from starting. All user-visible blocking is handled by the `UserPromptSubmit` hook (triggered on the user's first message).
-
-## New IP Alerts
-
-When a new unrecognized IP appears (direct connection succeeds, IP not in restricted countries), a graded warning is shown via exit 2. The current prompt is blocked; the user can **resend to continue** (on resend the IP is already in history and passes through):
-
-| Unique IPs (last 30 days) | Level | Message prefix |
-|---------------------------|-------|----------------|
-| 1st | Info | `[提示]` |
-| 2nd – 3rd | Notice | `[注意]` |
-| 4th – 6th | Warning | `[警告]` |
-| 7th+ | Critical | `[严重警告]` |
-
-Each alert includes a formatted table of the last 30 days of IP history.
-
-## Requirements
-
-- `bash`
-- `curl`
-- `python3` or `python`
-
-Supported platforms: macOS, Linux, WSL, **Windows (Git Bash)**. Native Windows CMD/PowerShell is not supported.
-
-### Windows — Git Bash setup
-
-The scripts require a bash environment. On Windows, [Git for Windows](https://git-scm.com/download/win) provides Git Bash, which includes `bash`, `curl`, and `grep` — no WSL needed.
-
-**Step 1 — Install Git for Windows**
-
-Download and run the installer. On the "Adjusting your PATH environment" screen, select **"Git from the command line and also from 3rd-party software"** to add `bash` to PATH.
-
-**Step 2 — Install Python**
-
-Download Python from [python.org](https://www.python.org/downloads/windows/) and run the installer. Check **"Add Python to PATH"** before clicking Install.
-
-> The scripts auto-detect whether to use `python3` or `python`, so both naming conventions work.
-
-**Step 3 — Open Git Bash and run the installer**
-
-Right-click any folder in Explorer and select **"Git Bash Here"**, then run:
+**全局安装**（推荐，对本机所有项目生效）：
 
 ```bash
-git clone https://github.com/your-username/claude-ip-guard.git
+git clone https://github.com/cso1z/claude-ip-guard.git
 bash claude-ip-guard/install.sh
 ```
 
-**Step 4 — Verify**
+**项目级安装**（仅对当前项目生效）：
 
 ```bash
-bash ~/.claude/scripts/check-ip-on-prompt.sh
-# Expected: exits cleanly (code 0)
-
-cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
-# Expected: a "放行" (allowed) log line with your IP and country
-```
-
-> All subsequent `bash` and `git clone` commands in this README should be run inside Git Bash, not CMD or PowerShell.
-
-## Installation
-
-### Global install (applies to all projects on this machine, default)
-
-> **Windows users**: Run the commands below in **Git Bash**, not CMD or PowerShell. Right-click any folder and select "Git Bash Here" to open it.
-
-```bash
-git clone https://github.com/your-username/claude-ip-guard.git
-bash claude-ip-guard/install.sh          # no flag = global (recommended)
-# or explicitly
-bash claude-ip-guard/install.sh --global
-```
-
-Scripts are copied to `~/.claude/scripts/` and hooks use absolute paths.
-
-### Project install (applies to one project only)
-
-```bash
-# install into the current directory
 bash claude-ip-guard/install.sh --project
-
-# install into a specific project
+# 或指定路径
 bash claude-ip-guard/install.sh --project /path/to/your/project
 ```
 
-Scripts are copied to `.claude/scripts/` and hooks use relative paths.
+**手动安装**：将 `.claude/scripts/` 复制到项目目录，授权执行后将以下配置合并到 `.claude/settings.json`：
 
-The installer will:
-1. Copy `ip-guard-lib.sh`, `check-ip-on-start.sh`, `check-ip-on-prompt.sh` to the target scripts directory
-2. Generate the correct hook config with matching paths
-3. Create `settings.json` if it doesn't exist, or automatically merge hooks into the existing file (existing config is preserved)
-4. Restart Claude Code to apply
-
-### Manual install
-
-1. Copy `.claude/scripts/` to your project's `.claude/scripts/`
-2. Grant execute permissions:
-   ```bash
-   chmod +x .claude/scripts/*.sh
-   ```
-3. Merge the hook config into `.claude/settings.json`:
-   ```json
-   {
-     "hooks": {
-       "SessionStart": [
-         {
-           "matcher": "startup",
-           "hooks": [{ "type": "command", "command": "bash .claude/scripts/check-ip-on-start.sh", "timeout": 15 }]
-         }
-       ],
-       "UserPromptSubmit": [
-         {
-           "hooks": [{ "type": "command", "command": "bash .claude/scripts/check-ip-on-prompt.sh", "timeout": 15 }]
-         }
-       ]
-     }
-   }
-   ```
-4. Restart Claude Code
-
-## File Structure
-
-```
-claude-ip-guard/
-├── install.sh                      # Installer (global by default, --project for per-project)
-├── doc/
-│   └── ip-access-control-design.md # Full design document
-└── .claude/
-    ├── settings.json               # Hook configuration template
-    └── scripts/
-        ├── ip-guard-lib.sh         # Shared library: queries, cache, history, blocking
-        ├── check-ip-on-start.sh    # SessionStart hook
-        └── check-ip-on-prompt.sh   # UserPromptSubmit hook
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "_ip_guard": true,
+        "matcher": "startup|resume",
+        "hooks": [{ "type": "command", "command": "bash .claude/scripts/check-ip-on-start.sh", "timeout": 15 }]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "_ip_guard": true,
+        "hooks": [{ "type": "command", "command": "bash .claude/scripts/check-ip-on-prompt.sh", "timeout": 15 }]
+      }
+    ]
+  }
+}
 ```
 
-**Runtime cache** (local, not committed):
+## 工作原理
 
-```
-~/.cache/claude-ip-guard/
-├── ip_cache                        # Current IP cache (timestamp|country|city|ip)
-├── ip_history.jsonl                # IP change history (30-day retention, JSONL)
-└── ip-guard-YYYY-MM-DD.log         # Daily log files
-```
+挂载 `SessionStart` 和 `UserPromptSubmit` 两个 Hook，在会话启动和每次发送消息前自动检测当前网络环境（直连可达性 + 出口 IP 地理位置），根据结果决定放行或拦截。
 
-## Verify Installation
+## 新 IP 分级警告
 
-Follow these steps to confirm the hooks are working correctly.
+出现新 IP 时触发软拦截，根据近 30 天累计出现的不同 IP 数给出分级提示：
 
-**Step 1 — Find your current country code**
+| 近 30 天不同 IP 数 | 等级 | 提示前缀 |
+|-------------------|------|---------|
+| 第 1 个 | — | 直接放行，建立基准，不提示 |
+| 第 2～3 个 | 注意 | `[注意]` |
+| 第 4～6 个 | 警告 | `[警告]` |
+| 第 7 个及以上 | 严重 | `[严重警告]` |
 
-Check your current IP's country code at [https://ipinfo.io/json](https://ipinfo.io/json). Look for the `country` field, e.g. `"country": "SG"`.
+软拦截仅阻止当次消息，**重新发送即可继续**。
 
-**Step 2 — Temporarily add it to the block list**
+> 频繁切换 IP 本身也是封号风险因素之一。分级警告的目的是提醒你关注网络环境的稳定性，而不仅仅是拦截受限地区。等级越高，说明近期 IP 变动越频繁，建议排查原因。
 
-Open `.claude/scripts/ip-guard-lib.sh` (or `~/.claude/scripts/ip-guard-lib.sh` for global install) and add your country code:
+## 禁止国家列表
+
+基于 [Anthropic 官方支持地区](https://www.anthropic.com/supported-countries) 及美国 OFAC 出口管制规定：
+
+| 国家/地区 | ISO 代码 | 原因 |
+|-----------|----------|------|
+| 中国大陆 | `CN` | 监管/地缘政治 |
+| 俄罗斯 | `RU` | 美国制裁 |
+| 朝鲜 | `KP` | OFAC 制裁 |
+| 伊朗 | `IR` | OFAC 制裁 |
+| 叙利亚 | `SY` | OFAC 制裁 |
+| 古巴 | `CU` | OFAC 制裁 |
+| 白俄罗斯 | `BY` | 制裁相关 |
+| 委内瑞拉 | `VE` | 未列入支持名单 |
+| 缅甸 | `MM` | 未列入支持名单 |
+| 利比亚 | `LY` | 未列入支持名单 |
+| 索马里 | `SO` | 未列入支持名单 |
+| 也门 | `YE` | 未列入支持名单 |
+| 马里 | `ML` | 未列入支持名单 |
+| 中非共和国 | `CF` | 未列入支持名单 |
+| 南苏丹 | `SS` | 未列入支持名单 |
+| 刚果民主共和国 | `CD` | 未列入支持名单 |
+| 厄立特里亚 | `ER` | 未列入支持名单 |
+| 阿富汗 | `AF` | 未列入支持名单 |
+| 乌克兰 | `UA` | 俄占区受限，因无法识别具体省份，按整国处理 |
+
+## 验证是否生效
+
+关闭 VPN，直接运行检测脚本，通过日志查看检测结果：
 
 ```bash
-BLOCKED_COUNTRIES=(
-    "CN"
-    "RU"
-    # ... existing entries ...
-    "SG"  # ← add your country code here for testing
-)
+bash ~/.claude/scripts/check-ip-on-start.sh
+cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
 ```
 
-**Step 3 — Restart Claude Code and send any message**
+## 常见问题
 
-You should see the following block message when submitting a prompt:
+**Q：会影响 Claude Code 的响应速度吗？**
 
-![Block message screenshot](./doc/screenshots/blocked.png)
+每次 prompt 先做轻量 IP 比对，命中缓存（IP 相同且 < 10 分钟）直接放行，无网络请求。仅 IP 变化或缓存过期时才发起地理位置查询，正常使用几乎无感知。
 
-**Step 4 — Remove the test entry**
+**Q：我使用第三方代理（如中转 API），会被误拦吗？**
 
-Delete the line you added in Step 2, save the file. The block is lifted immediately on the next prompt.
+不会。检测到 `ANTHROPIC_BASE_URL` 指向非官方地址时，自动跳过全部检测，不干预第三方代理用户。
 
----
+**Q：VPN 分流场景（直连通但地理位置显示受限国家）会怎样？**
 
-## Team Sharing
+会被识别为分流代理场景，正常放行，不写缓存和历史。适用于代理只转发 Anthropic 流量、本地其他流量走直连的情况。
 
-Commit `.claude/settings.json` and `.claude/scripts/` to your repository. All team members who pull the repo will have the hooks automatically applied.
+**Q：出现误拦（正常 IP 被拦截）怎么办？**
 
-Members can override locally via `.claude/settings.local.json` (not committed).
+1. 检查日志确认 IP 和国家代码：`cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log`
+2. 若国家代码有误，可提 Issue 反馈
+3. 临时解决：删除 `~/.cache/claude-ip-guard/ip_cache` 清除缓存后重试
 
-## APIs Used
+**Q：新 IP 软拦截后必须等多久才能继续？**
 
-| API | Purpose | Protocol |
-|-----|---------|----------|
-| `api.anthropic.com` | Direct connectivity check (primary gate) | HTTPS |
-| `api.ipify.org` | Lightweight IP lookup (every prompt) | HTTPS |
-| `ipinfo.io` | Full geo query — primary | HTTPS |
-| `ip-api.com` | Full geo query — fallback | HTTP |
+不需要等待。软拦截仅阻止当次 prompt，**直接重新发送**同一条消息即可继续——第二次发送时 IP 已记入历史，正常放行。
+
+**Q：如何自定义拦截国家？**
+
+编辑 `~/.claude/scripts/ip-guard-lib.sh`（项目级安装则是 `.claude/scripts/ip-guard-lib.sh`），在 `BLOCKED_COUNTRIES` 数组中增减 ISO 代码即可，无需重新安装。
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request。
+
+- **Bug 报告**：请附上日志文件内容和 `bash --version` 输出
+- **新增受限国家**：在 Issue 中说明国家代码和依据，维护者会更新 `ip-guard-lib.sh`
+- **其他改进**：建议先开 Issue 讨论方案，再提 PR
+
+## 使用的接口
+
+| 接口 | 用途 | 协议 |
+|------|------|------|
+| `api.anthropic.com` | 直连检测（主判断门） | HTTPS |
+| `api.ipify.org` | 轻量 IP 查询（每次 prompt） | HTTPS |
+| `ipinfo.io` | 完整地理查询（主） | HTTPS |
+| `ip-api.com` | 完整地理查询（备） | HTTP |
 
 ## License
 
