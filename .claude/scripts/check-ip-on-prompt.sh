@@ -62,13 +62,8 @@ main() {
     fi
 
     # ── 6. 直连测试，记录 direct_ok ────────────────────────────────────────────
-    local direct_ok="false"
-    if test_direct; then
-        direct_ok="true"
-        log "直连可达（direct_ok=true）"
-    else
-        log "直连不可达（direct_ok=false）"
-    fi
+    run_direct_test
+    local direct_ok="$DIRECT_OK"
 
     # ── 7. Geo 查询（ipinfo.io 主 → ip-api.com 备）────────────────────────────
     log "发起 geo 查询：IP=${current_ip}"

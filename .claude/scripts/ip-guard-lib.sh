@@ -109,10 +109,25 @@ test_direct() {
         "$api_url" 2>/dev/null)
 
     log "返回 status: ${status:-<empty>}"
-    [ -z "$status" ] && return 1
     case "$status" in
-        403)     return 2 ;;  # 明确被拒（WAF/区域封锁），最高优先级
-        *)       return 0 ;;
+        403)         return 2 ;;  # 明确被拒（WAF/区域封锁）
+        "" | 000)    return 1 ;;  # 连接超时/无响应，状态未知
+        *)           return 0 ;;  # 收到任意 HTTP 响应，链路可达
+    esac
+}
+
+# test_direct 结果处理：设置全局 DIRECT_OK（"true"/"unknown"），403 直接 exit 2
+# 调用方：run_direct_test; local direct_ok="$DIRECT_OK"
+run_direct_test() {
+    DIRECT_OK="unknown"
+    test_direct
+    local rc=$?
+    case $rc in
+        0) DIRECT_OK="true"; log "直连可达（direct_ok=true）" ;;
+        2) log "直连被明确拒绝（HTTP 403），硬拦截"
+           echo "[访问受限] 检测到当前 IP 被 Anthropic 明确拒绝（HTTP 403），无法使用 Claude。请切换网络后重试。" >&2
+           exit 2 ;;
+        *) log "直连异常（连接超时/无响应，direct_ok=unknown），退而依赖 geo 判断" ;;
     esac
 }
 
@@ -121,11 +136,27 @@ test_direct() {
 # 轻量查询：仅获取当前公网 IP，不含地理信息
 # 用于 UserPromptSubmit 快速比对，开销极小
 query_current_ip() {
-    curl -s \
+    local ip
+    # 主接口：ipify.org（国际）
+    ip=$(curl -s \
         --max-time        "$CURL_TIMEOUT" \
         --connect-timeout "$CURL_TIMEOUT" \
         "https://api.ipify.org?format=json" 2>/dev/null \
-        | $PYTHON -c "import sys,json; d=json.load(sys.stdin); print(d.get('ip',''))" 2>/dev/null
+        | $PYTHON -c "import sys,json; d=json.load(sys.stdin); print(d.get('ip',''))" 2>/dev/null)
+    [ -n "$ip" ] && echo "$ip" && return
+    log "query_current_ip: 主接口 ipify.org 失败，尝试备用接口"
+
+    # 备用接口：ip-api.com（大陆可达，防 VPN 误切大陆导致主接口不可达）
+    ip=$(curl -s \
+        --max-time        "$CURL_TIMEOUT" \
+        --connect-timeout "$CURL_TIMEOUT" \
+        "http://ip-api.com/json/" 2>/dev/null \
+        | $PYTHON -c "import sys,json; d=json.load(sys.stdin); print(d.get('query',''))" 2>/dev/null)
+    if [ -n "$ip" ]; then
+        echo "$ip"
+    else
+        log "query_current_ip: 备用接口 ip-api.com 失败，无法获取 IP"
+    fi
 }
 
 # 校验 IP 格式（IPv4 或 IPv6），防止异常值拼接进 URL
@@ -363,11 +394,12 @@ build_new_ip_warning() {
 
 # ─── 核心检测逻辑 ─────────────────────────────────────────────────────────────
 # 参数: ip country region city org direct_ok
-# direct_ok="true"  → 直连成功
-# direct_ok="false" → 直连失败
+# direct_ok="true"    → 直连成功（收到 HTTP 响应）
+# direct_ok="unknown" → 直连异常（000/超时/无响应），退而依赖 geo 判断
+# （direct_rc=2/403 由调用方在进入此函数前直接硬拦截，不传入）
 #
-# direct_ok=false:
-#   IP 在禁用区 → exit 2 硬拦截
+# direct_ok=unknown:
+#   IP 在禁用区 → exit 2 硬拦截（geo 作为主要信号）
 #   IP 不在禁用区 → exit 0 fail-safe 放行
 #
 # direct_ok=true:
@@ -379,14 +411,14 @@ build_new_ip_warning() {
 process_geo_result() {
     local ip="$1" country="$2" region="$3" city="$4" org="$5" direct_ok="$6"
 
-    # ── direct_ok=false 分支 ──────────────────────────────────────────────────
-    if [ "$direct_ok" != "true" ]; then
+    # ── direct_ok=unknown 分支：连接异常，退而依赖 geo ────────────────────────
+    if [ "$direct_ok" = "unknown" ]; then
         if is_blocked "$country"; then
-            log "硬拦截：IP=${ip} COUNTRY=${country}（黑名单命中，直连不通）"
+            log "硬拦截：IP=${ip} COUNTRY=${country}（黑名单命中，直连异常/超时）"
             echo "[访问受限] 检测到您当前的网络 IP（${ip}）位于受限地区（${country}），无法使用 Claude。请切换网络后重试。" >&2
             exit 2
         fi
-        log "放行（直连失败，COUNTRY=${country} 不在黑名单，fail-safe）：IP=${ip}"
+        log "放行（直连异常，COUNTRY=${country} 不在黑名单，fail-safe）：IP=${ip}"
         return
     fi
 

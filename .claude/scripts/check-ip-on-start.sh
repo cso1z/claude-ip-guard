@@ -15,20 +15,9 @@ main() {
     fi
 
     # ── 2. 直连测试，记录 direct_ok ────────────────────────────────────────────
-    local direct_ok="false"
     log "测试直连：${ANTHROPIC_DIRECT}"
-    test_direct
-    local direct_rc=$?
-    if [ $direct_rc -eq 0 ]; then
-        direct_ok="true"
-        log "直连可达（direct_ok=true）"
-    elif [ $direct_rc -eq 2 ]; then
-        log "直连被明确拒绝（HTTP 403），硬拦截"
-        echo "[访问受限] 检测到当前 IP 被 Anthropic 明确拒绝（HTTP 403），无法使用 Claude。请切换网络后重试。" >&2
-        exit 2
-    else
-        log "直连不可达（连接超时/拒绝，direct_ok=false）"
-    fi
+    run_direct_test
+    local direct_ok="$DIRECT_OK"
 
     # ── 3. Geo 查询（ipinfo.io 主 → ip-api.com 备）────────────────────────────
     local geo_result

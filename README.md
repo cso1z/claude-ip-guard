@@ -62,7 +62,11 @@ bash claude-ip-guard/install.sh --project /path/to/your/project
 
 ## 工作原理
 
-挂载 `SessionStart` 和 `UserPromptSubmit` 两个 Hook，在会话启动和每次发送消息前自动检测当前网络环境（直连可达性 + 出口 IP 地理位置），根据结果决定放行或拦截。
+挂载 `SessionStart` 和 `UserPromptSubmit` 两个 Hook，在会话启动和每次发送消息前自动检测当前网络环境（直连可达性 + 出口 IP 地理位置），根据结果决定放行或拦截：
+
+- **HTTP 403**：Anthropic 明确拒绝该 IP，立即硬拦截
+- **直连可达（收到任意 HTTP 响应）**：进入 geo + IP 历史检查流程
+- **直连异常（超时/无响应）**：退而依赖 geo 判断，受限地区硬拦截，否则 fail-safe 放行
 
 ## 新 IP 分级警告
 
@@ -155,9 +159,9 @@ cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
 | 接口 | 用途 | 协议 |
 |------|------|------|
 | `api.anthropic.com` | 直连检测（主判断门） | HTTPS |
-| `api.ipify.org` | 轻量 IP 查询（每次 prompt） | HTTPS |
+| `api.ipify.org` | 轻量 IP 查询（主，每次 prompt） | HTTPS |
 | `ipinfo.io` | 完整地理查询（主） | HTTPS |
-| `ip-api.com` | 完整地理查询（备） | HTTP |
+| `ip-api.com` | 轻量 IP 查询（备）/ 完整地理查询（备） | HTTP |
 
 ## License
 
