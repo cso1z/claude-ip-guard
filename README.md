@@ -90,6 +90,8 @@ bash claude-ip-guard/install.sh --project /path/to/your/project
 | 国家/地区 | ISO 代码 | 原因 |
 |-----------|----------|------|
 | 中国大陆 | `CN` | 监管/地缘政治 |
+| 中国香港 | `HK` | 未列入支持名单 |
+| 中国澳门 | `MO` | 未列入支持名单 |
 | 俄罗斯 | `RU` | 美国制裁 |
 | 朝鲜 | `KP` | OFAC 制裁 |
 | 伊朗 | `IR` | OFAC 制裁 |

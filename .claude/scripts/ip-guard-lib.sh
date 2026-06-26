@@ -11,6 +11,8 @@ CACHE_FILE="$CACHE_DIR/ip_cache"           # 格式: timestamp|country|city|ip
 HISTORY_FILE="$CACHE_DIR/ip_history.jsonl" # 每行一条 JSON，记录 IP 变化
 BLOCKED_COUNTRIES=(
     "CN"  # 中国大陆 - 监管/地缘政治
+    "HK"  # 中国香港 - 未列入支持名单
+    "MO"  # 中国澳门 - 未列入支持名单
     "RU"  # 俄罗斯 - 美国制裁
     "KP"  # 朝鲜 - OFAC 制裁
     "IR"  # 伊朗 - OFAC 制裁
