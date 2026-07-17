@@ -154,6 +154,13 @@ cat ~/.cache/claude-ip-guard/ip-guard-$(date '+%Y-%m-%d').log
 - **新增受限国家**：在 Issue 中说明国家代码和依据，维护者会更新 `ip-guard-lib.sh`
 - **其他改进**：建议先开 Issue 讨论方案，再提 PR
 
+
+## 作者的其他项目
+
+如果你平时需要同时处理大量网页、文档和项目资料，可以看看 [TabSyncer](https://github.com/cso1z/TabSyncer)：一个支持标签页整理、会话快照和跨设备同步的 Chrome 扩展。
+
+[查看官网](https://www.joker.blue/tab/website/) · [安装扩展](https://chromewebstore.google.com/detail/tabsyncer/ngfhokcebemclkfagnkgfficddkmcoim?hl=zh-CN&utm_source=ip-guard)
+
 ## 使用的接口
 
 | 接口 | 用途 | 协议 |
